@@ -198,7 +198,7 @@ export default function InteractiveAvatar() {
     // Add event for speech recognition results
     avatar.current?.on(StreamingEvents.USER_TALKING_MESSAGE, (event) => {
       console.log("Speech recognition result:", event.detail);
-      if (event.detail && event.detail.text) {
+      if (event.detail && event.detail.message) {
         setLastRecognizedSpeech(event.detail.text);
       }
     });
