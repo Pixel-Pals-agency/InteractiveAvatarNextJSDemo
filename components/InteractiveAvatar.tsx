@@ -103,8 +103,9 @@ export default function InteractiveAvatar() {
       console.log("Webhook response:", responseData);
       
       // Have the avatar speak the response
-      if (responseData && responseData.response) {
-        console.log("Webhook response to speak:", responseData.response);
+      if (responseData && (responseData.response || responseData.output)) {
+        const textToSpeak = responseData.response || responseData.output;
+        console.log("Webhook response to speak:", textToSpeak);
         
         // Check if avatar instance exists
         if (!avatar.current) {
@@ -117,14 +118,15 @@ export default function InteractiveAvatar() {
           // Make sure we're not interrupting a current speech task
           await new Promise(resolve => setTimeout(resolve, 500));
           
-          console.log("Calling avatar speak with:", {
-            text: responseData.response,
-            taskType: TaskType.REPEAT,
-            taskMode: TaskMode.SYNC
-          });
+          // Clean up the output if it contains analysis tags
+          const cleanedText = textToSpeak.includes('<analysis>') 
+            ? textToSpeak.replace(/<analysis>[\s\S]*?<\/analysis>/g, '').trim()
+            : textToSpeak;
+          
+          console.log("Calling avatar speak with cleaned text:", cleanedText);
           
           await avatar.current.speak({ 
-            text: responseData.response, 
+            text: cleanedText, 
             taskType: TaskType.REPEAT, 
             taskMode: TaskMode.SYNC 
           });
