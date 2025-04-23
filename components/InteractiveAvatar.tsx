@@ -183,18 +183,19 @@ export default function InteractiveAvatar() {
       console.log(">>>>> User stopped talking:", event);
       setIsUserTalking(false);
       
-      // Use the lastRecognizedSpeech state instead of event.detail.text
+      // Immediately interrupt to prevent any automatic responses
+      try {
+        await avatar.current?.interrupt();
+      } catch (e) {
+        console.warn("Failed to interrupt:", e);
+      }
+      
+      // Small delay to ensure interruption completes
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Use the lastRecognizedSpeech state
       if (lastRecognizedSpeech && chatMode === "voice_mode") {
         console.log("Processing recognized speech:", lastRecognizedSpeech);
-        
-        // Interrupt any current avatar speech to prevent built-in responses
-        try {
-          await avatar.current?.interrupt();
-        } catch (e) {
-          console.warn("Failed to interrupt:", e);
-        }
-        
-        // Then send to webhook
         await sendToWebhook(lastRecognizedSpeech);
       }
     });
@@ -211,7 +212,7 @@ export default function InteractiveAvatar() {
       const res = await avatar.current.createStartAvatar({
         quality: AvatarQuality.Low,
         avatarName: avatarId,
-        knowledgeId: "", // Set to empty string to bypass HeyGen's internal knowledge processing
+        knowledgeId: null, // Set to empty string to bypass HeyGen's internal knowledge processing
         voice: {
           rate: 1.5,
           emotion: VoiceEmotion.EXCITED,
