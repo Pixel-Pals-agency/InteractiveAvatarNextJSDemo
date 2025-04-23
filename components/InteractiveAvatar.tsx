@@ -212,7 +212,7 @@ export default function InteractiveAvatar() {
       const res = await avatar.current.createStartAvatar({
         quality: AvatarQuality.Low,
         avatarName: avatarId,
-        knowledgeId: null, // Set to empty string to bypass HeyGen's internal knowledge processing
+         // Set to empty string to bypass HeyGen's internal knowledge processing
         voice: {
           rate: 1.5,
           emotion: VoiceEmotion.EXCITED,
