@@ -49,6 +49,7 @@ export default function InteractiveAvatar() {
   const [chatMode, setChatMode] = useState("text_mode");
   const [isUserTalking, setIsUserTalking] = useState(false);
   const [processingWebhook, setProcessingWebhook] = useState(false);
+  const [speakingError, setSpeakingError] = useState<string>("");
 
   // Function to generate a session ID if one isn't provided by the API
   const generateSessionId = () => {
@@ -99,14 +100,45 @@ export default function InteractiveAvatar() {
       }
 
       const responseData = await response.json();
+      console.log("Webhook response:", responseData);
       
       // Have the avatar speak the response
       if (responseData && responseData.response) {
-        await avatar.current?.speak({ 
-          text: responseData.response, 
-          taskType: TaskType.REPEAT, 
-          taskMode: TaskMode.SYNC 
-        });
+        console.log("Webhook response to speak:", responseData.response);
+        
+        // Check if avatar instance exists
+        if (!avatar.current) {
+          console.error("Avatar instance is null when trying to speak webhook response");
+          setDebug("Avatar instance is null when trying to speak webhook response");
+          return;
+        }
+
+        try {
+          // Make sure we're not interrupting a current speech task
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          console.log("Calling avatar speak with:", {
+            text: responseData.response,
+            taskType: TaskType.REPEAT,
+            taskMode: TaskMode.SYNC
+          });
+          
+          await avatar.current.speak({ 
+            text: responseData.response, 
+            taskType: TaskType.REPEAT, 
+            taskMode: TaskMode.SYNC 
+          });
+          
+          console.log("Avatar speak method called successfully");
+        } catch (error) {
+          console.error("Error making avatar speak:", error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          setSpeakingError(errorMessage);
+          setDebug(`Avatar speak error: ${errorMessage}`);
+        }
+      } else {
+        console.warn("No response text found in webhook response data", responseData);
+        setDebug("No response text found in webhook response data");
       }
 
       return responseData;
@@ -208,13 +240,16 @@ export default function InteractiveAvatar() {
     } catch (error) {
       console.error("Error in handleSpeak:", error);
       // If webhook fails, still let the avatar speak the original text
-      await avatar.current.speak({ 
-        text: text, 
-        taskType: TaskType.REPEAT, 
-        taskMode: TaskMode.SYNC 
-      }).catch((e) => {
-        setDebug(e.message);
-      });
+      try {
+        await avatar.current.speak({ 
+          text: text, 
+          taskType: TaskType.REPEAT, 
+          taskMode: TaskMode.SYNC 
+        });
+      } catch (e) {
+        console.error("Error making avatar speak original text:", e);
+        setDebug(`Error speaking original text: ${e instanceof Error ? e.message : String(e)}`);
+      }
     } finally {
       setIsLoadingRepeat(false);
     }
@@ -235,6 +270,28 @@ export default function InteractiveAvatar() {
     setStream(undefined);
     setSessionId("");
     sessionIdRef.current = ""; // Reset the ref as well
+  }
+
+  // Test avatar speaking capability
+  async function testAvatarSpeech() {
+    if (!avatar.current) {
+      setDebug("Avatar API not initialized");
+      return;
+    }
+
+    try {
+      console.log("Testing avatar speech with a simple message");
+      await avatar.current.speak({
+        text: "This is a test. Can you hear me?",
+        taskType: TaskType.REPEAT,
+        taskMode: TaskMode.SYNC
+      });
+      console.log("Test speech completed successfully");
+      setDebug("Test speech completed successfully");
+    } catch (error) {
+      console.error("Test speech failed:", error);
+      setDebug(`Test speech failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   const handleChangeChatMode = useMemoizedFn(async (v) => {
@@ -293,6 +350,14 @@ export default function InteractiveAvatar() {
                 <track kind="captions" />
               </video>
               <div className="flex flex-col gap-2 absolute bottom-3 right-3">
+                <Button
+                  className="bg-gradient-to-tr from-indigo-500 to-indigo-300 text-white rounded-lg"
+                  size="md"
+                  variant="shadow"
+                  onClick={testAvatarSpeech}
+                >
+                  Test Speech
+                </Button>
                 <Button
                   className="bg-gradient-to-tr from-indigo-500 to-indigo-300 text-white rounded-lg"
                   size="md"
@@ -402,6 +467,9 @@ export default function InteractiveAvatar() {
               {processingWebhook && (
                 <Chip color="warning" className="absolute right-32 top-3">Processing</Chip>
               )}
+              {speakingError && (
+                <Chip color="danger" className="absolute right-48 top-3">Speech Error</Chip>
+              )}
             </div>
           ) : (
             <div className="w-full text-center">
@@ -421,6 +489,12 @@ export default function InteractiveAvatar() {
         <span className="font-bold">Console:</span>
         <br />
         {debug}
+        {speakingError && (
+          <>
+            <br />
+            <span className="text-red-500">Speaking Error: {speakingError}</span>
+          </>
+        )}
       </p>
     </div>
   );
