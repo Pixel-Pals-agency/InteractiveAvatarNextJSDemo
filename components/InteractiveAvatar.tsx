@@ -39,6 +39,8 @@ export default function InteractiveAvatar() {
   const [avatarId, setAvatarId] = useState<string>("");
   const [language, setLanguage] = useState<string>("en");
   const [sessionId, setSessionId] = useState<string>("");
+  // Add a ref to store the session ID that can be accessed synchronously
+  const sessionIdRef = useRef<string>("");
 
   const [data, setData] = useState<StartAvatarResponse>();
   const [text, setText] = useState<string>("");
@@ -70,16 +72,19 @@ export default function InteractiveAvatar() {
   }
 
   // Function to send messages to webhook
-  async function sendToWebhook(message: string, overrideSessionId?: string) {
+  async function sendToWebhook(message: string) {
     setProcessingWebhook(true);
     try {
+      // Log the current session ID for debugging
+      console.log("Sending to webhook with sessionId:", sessionIdRef.current);
+      
       const response = await fetch(WEBHOOK_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          sessionId: overrideSessionId || sessionId,
+          sessionId: sessionIdRef.current,
           message: message
         }),
       });
@@ -158,12 +163,18 @@ export default function InteractiveAvatar() {
       });
 
       setData(res);
-      // Store the session ID for webhook usage
+      
+      // Store session ID in both state and ref
       if (res.sessionId) {
         setSessionId(res.sessionId);
+        sessionIdRef.current = res.sessionId;
+        console.log("Session ID set to:", res.sessionId);
         
-        // Send initial "start" message to webhook with the session ID directly
-        await sendToWebhook("start", res.sessionId);
+        // Send initial "start" message to webhook
+        await sendToWebhook("start");
+      } else {
+        console.error("No session ID received from createStartAvatar");
+        setDebug("Error: No session ID received");
       }
       
       // default to voice mode
@@ -218,6 +229,7 @@ export default function InteractiveAvatar() {
     await avatar.current?.stopAvatar();
     setStream(undefined);
     setSessionId("");
+    sessionIdRef.current = ""; // Reset the ref as well
   }
 
   const handleChangeChatMode = useMemoizedFn(async (v) => {
