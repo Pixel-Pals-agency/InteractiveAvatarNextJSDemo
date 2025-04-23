@@ -50,6 +50,7 @@ export default function InteractiveAvatar() {
   const [isUserTalking, setIsUserTalking] = useState(false);
   const [processingWebhook, setProcessingWebhook] = useState(false);
   const [speakingError, setSpeakingError] = useState<string>("");
+  const [lastRecognizedSpeech, setLastRecognizedSpeech] = useState<string>("");
 
   // Function to generate a session ID if one isn't provided by the API
   const generateSessionId = () => {
@@ -184,7 +185,21 @@ export default function InteractiveAvatar() {
       
       // If there's speech content, send it to webhook
       if (event.detail && event.detail.text) {
-        await sendToWebhook(event.detail.text);
+        const recognizedText = event.detail.text;
+        setLastRecognizedSpeech(recognizedText);
+        console.log("Recognized speech:", recognizedText);
+        
+        if (chatMode === "voice_mode") {
+          await sendToWebhook(recognizedText);
+        }
+      }
+    });
+    
+    // Add event for speech recognition results
+    avatar.current?.on(StreamingEvents.USER_TRANSCRIPT, (event) => {
+      console.log("Speech recognition result:", event.detail);
+      if (event.detail && event.detail.text) {
+        setLastRecognizedSpeech(event.detail.text);
       }
     });
     
@@ -474,15 +489,25 @@ export default function InteractiveAvatar() {
               )}
             </div>
           ) : (
-            <div className="w-full text-center">
-              <Button
-                isDisabled={!isUserTalking && !processingWebhook}
-                className="bg-gradient-to-tr from-indigo-500 to-indigo-300 text-white"
-                size="md"
-                variant="shadow"
-              >
-                {processingWebhook ? "Processing" : isUserTalking ? "Listening" : "Voice chat"}
-              </Button>
+            <div className="w-full text-center flex flex-col gap-2">
+              <div className="flex justify-center items-center gap-2">
+                {isUserTalking && (
+                  <Chip color="success" className="animate-pulse">Listening</Chip>
+                )}
+                {processingWebhook && (
+                  <Chip color="warning">Processing</Chip>
+                )}
+                {speakingError && (
+                  <Chip color="danger">Speech Error</Chip>
+                )}
+              </div>
+              {lastRecognizedSpeech && (
+                <div className="p-2 bg-gray-100 rounded-lg text-center max-w-lg mx-auto">
+                  <p className="text-sm text-gray-700">
+                    <span className="font-semibold">You said:</span> {lastRecognizedSpeech}
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </CardFooter>
