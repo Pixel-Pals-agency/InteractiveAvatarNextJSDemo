@@ -28,6 +28,8 @@ import InteractiveAvatarTextInput from "./InteractiveAvatarTextInput";
 
 import { AVATARS, STT_LANGUAGE_LIST } from "@/app/lib/constants";
 
+const WEBHOOK_URL = "https://n8n.fastynet.click/webhook/b68e20df-39d6-4baa-a862-5b5f6b9bbcc6/chat";
+
 export default function InteractiveAvatar() {
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [isLoadingRepeat, setIsLoadingRepeat] = useState(false);
@@ -36,6 +38,7 @@ export default function InteractiveAvatar() {
   const [knowledgeId, setKnowledgeId] = useState<string>("");
   const [avatarId, setAvatarId] = useState<string>("");
   const [language, setLanguage] = useState<string>("en");
+  const [sessionId, setSessionId] = useState<string>("");
 
   const [data, setData] = useState<StartAvatarResponse>();
   const [text, setText] = useState<string>("");
@@ -43,6 +46,7 @@ export default function InteractiveAvatar() {
   const avatar = useRef<StreamingAvatar | null>(null);
   const [chatMode, setChatMode] = useState("text_mode");
   const [isUserTalking, setIsUserTalking] = useState(false);
+  const [processingWebhook, setProcessingWebhook] = useState(false);
 
   function baseApiUrl() {
     return process.env.NEXT_PUBLIC_BASE_API_URL;
@@ -63,6 +67,45 @@ export default function InteractiveAvatar() {
     }
 
     return "";
+  }
+
+  // Function to send messages to webhook
+  async function sendToWebhook(message: string) {
+    setProcessingWebhook(true);
+    try {
+      const response = await fetch(WEBHOOK_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sessionId: sessionId,
+          message: message
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Webhook response error: ${response.status}`);
+      }
+
+      const responseData = await response.json();
+      
+      // Have the avatar speak the response
+      if (responseData && responseData.response) {
+        await avatar.current?.speak({ 
+          text: responseData.response, 
+          taskType: TaskType.REPEAT, 
+          taskMode: TaskMode.SYNC 
+        });
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error("Error sending to webhook:", error);
+      setDebug(`Webhook error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setProcessingWebhook(false);
+    }
   }
 
   async function startSession() {
@@ -91,30 +134,38 @@ export default function InteractiveAvatar() {
       console.log(">>>>> User started talking:", event);
       setIsUserTalking(true);
     });
-    avatar.current?.on(StreamingEvents.USER_STOP, (event) => {
+    avatar.current?.on(StreamingEvents.USER_STOP, async (event) => {
       console.log(">>>>> User stopped talking:", event);
       setIsUserTalking(false);
+      
+      // If there's speech content, send it to webhook
+      if (event.detail && event.detail.text) {
+        await sendToWebhook(event.detail.text);
+      }
     });
+    
     try {
       const res = await avatar.current.createStartAvatar({
         quality: AvatarQuality.Low,
         avatarName: avatarId,
-        knowledgeId: knowledgeId, // Or use a custom `knowledgeBase`.
+        knowledgeId: knowledgeId,
         voice: {
-          rate: 1.5, // 0.5 ~ 1.5
+          rate: 1.5,
           emotion: VoiceEmotion.EXCITED,
-          // elevenlabsSettings: {
-          //   stability: 1,
-          //   similarity_boost: 1,
-          //   style: 1,
-          //   use_speaker_boost: false,
-          // },
         },
         language: language,
         disableIdleTimeout: true,
       });
 
       setData(res);
+      // Store the session ID for webhook usage
+      if (res.sessionId) {
+        setSessionId(res.sessionId);
+        
+        // Send initial "start" message to webhook
+        await sendToWebhook("start");
+      }
+      
       // default to voice mode
       await avatar.current?.startVoiceChat({
         useSilencePrompt: false,
@@ -126,34 +177,47 @@ export default function InteractiveAvatar() {
       setIsLoadingSession(false);
     }
   }
+  
   async function handleSpeak() {
     setIsLoadingRepeat(true);
     if (!avatar.current) {
       setDebug("Avatar API not initialized");
-
       return;
     }
-    // speak({ text: text, task_type: TaskType.REPEAT })
-    await avatar.current
-      .speak({ text: text, taskType: TaskType.REPEAT, taskMode: TaskMode.SYNC })
-      .catch((e) => {
+    
+    try {
+      // First send the text to webhook and get response
+      await sendToWebhook(text);
+      // The webhook response will be handled in sendToWebhook function
+    } catch (error) {
+      console.error("Error in handleSpeak:", error);
+      // If webhook fails, still let the avatar speak the original text
+      await avatar.current.speak({ 
+        text: text, 
+        taskType: TaskType.REPEAT, 
+        taskMode: TaskMode.SYNC 
+      }).catch((e) => {
         setDebug(e.message);
       });
-    setIsLoadingRepeat(false);
+    } finally {
+      setIsLoadingRepeat(false);
+    }
   }
+  
   async function handleInterrupt() {
     if (!avatar.current) {
       setDebug("Avatar API not initialized");
-
       return;
     }
     await avatar.current.interrupt().catch((e) => {
       setDebug(e.message);
     });
   }
+  
   async function endSession() {
     await avatar.current?.stopAvatar();
     setStream(undefined);
+    setSessionId("");
   }
 
   const handleChangeChatMode = useMemoizedFn(async (v) => {
@@ -307,10 +371,10 @@ export default function InteractiveAvatar() {
           {chatMode === "text_mode" ? (
             <div className="w-full flex relative">
               <InteractiveAvatarTextInput
-                disabled={!stream}
+                disabled={!stream || processingWebhook}
                 input={text}
                 label="Chat"
-                loading={isLoadingRepeat}
+                loading={isLoadingRepeat || processingWebhook}
                 placeholder="Type something for the avatar to respond"
                 setInput={setText}
                 onSubmit={handleSpeak}
@@ -318,16 +382,19 @@ export default function InteractiveAvatar() {
               {text && (
                 <Chip className="absolute right-16 top-3">Listening</Chip>
               )}
+              {processingWebhook && (
+                <Chip color="warning" className="absolute right-32 top-3">Processing</Chip>
+              )}
             </div>
           ) : (
             <div className="w-full text-center">
               <Button
-                isDisabled={!isUserTalking}
+                isDisabled={!isUserTalking && !processingWebhook}
                 className="bg-gradient-to-tr from-indigo-500 to-indigo-300 text-white"
                 size="md"
                 variant="shadow"
               >
-                {isUserTalking ? "Listening" : "Voice chat"}
+                {processingWebhook ? "Processing" : isUserTalking ? "Listening" : "Voice chat"}
               </Button>
             </div>
           )}
