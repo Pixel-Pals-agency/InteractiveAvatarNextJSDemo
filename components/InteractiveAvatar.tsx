@@ -82,6 +82,17 @@ export default function InteractiveAvatar() {
   async function sendToWebhook(message: string) {
     setProcessingWebhook(true);
     try {
+      // First interrupt any ongoing speech to prevent conflicts
+      if (avatar.current) {
+        try {
+          await avatar.current.interrupt();
+          // Small delay to ensure interruption completes
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (e) {
+          console.warn("Failed to interrupt:", e);
+        }
+      }
+      
       // Log the current session ID for debugging
       console.log("Sending to webhook with sessionId:", sessionIdRef.current);
       
@@ -117,7 +128,7 @@ export default function InteractiveAvatar() {
 
         try {
           // Make sure we're not interrupting a current speech task
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, 200));
           
           // Clean up the output if it contains analysis tags
           const cleanedText = textToSpeak.includes('<analysis>') 
@@ -126,10 +137,11 @@ export default function InteractiveAvatar() {
           
           console.log("Calling avatar speak with cleaned text:", cleanedText);
           
+          // Always use REPEAT to ensure the avatar only says what we tell it to
           await avatar.current.speak({ 
             text: cleanedText, 
-            taskType: TaskType.REPEAT, 
-            taskMode: TaskMode.SYNC 
+            taskType: TaskType.REPEAT,  // This ensures we're just repeating text, not generating responses
+            taskMode: TaskMode.SYNC     // This ensures one speech task completes before another starts
           });
           
           console.log("Avatar speak method called successfully");
@@ -183,20 +195,27 @@ export default function InteractiveAvatar() {
       console.log(">>>>> User stopped talking:", event);
       setIsUserTalking(false);
       
-      // Immediately interrupt to prevent any automatic responses
-      try {
-        await avatar.current?.interrupt();
-      } catch (e) {
-        console.warn("Failed to interrupt:", e);
+      // Immediately interrupt any ongoing tasks to prevent built-in responses
+      if (avatar.current) {
+        try {
+          await avatar.current.interrupt();
+          // Small delay to ensure interruption completes
+          await new Promise(resolve => setTimeout(resolve, 200));
+        } catch (e) {
+          console.warn("Failed to interrupt:", e);
+        }
       }
-      
-      // Small delay to ensure interruption completes
-      await new Promise(resolve => setTimeout(resolve, 100));
       
       // Use the lastRecognizedSpeech state
       if (lastRecognizedSpeech && chatMode === "voice_mode") {
         console.log("Processing recognized speech:", lastRecognizedSpeech);
+        
+        // Send to webhook with a slight delay to ensure interruption is complete
+        await new Promise(resolve => setTimeout(resolve, 100));
         await sendToWebhook(lastRecognizedSpeech);
+        
+        // Clear the recognized speech after processing
+        setLastRecognizedSpeech("");
       }
     });
     
@@ -212,7 +231,7 @@ export default function InteractiveAvatar() {
       const res = await avatar.current.createStartAvatar({
         quality: AvatarQuality.Low,
         avatarName: avatarId,
-         // Set to empty string to bypass HeyGen's internal knowledge processing
+       // Set to null to not use HeyGen's knowledge base
         voice: {
           rate: 1.5,
           emotion: VoiceEmotion.EXCITED,
@@ -232,7 +251,15 @@ export default function InteractiveAvatar() {
       sessionIdRef.current = currentSessionId;
       console.log("Session ID set to:", currentSessionId);
       
-      // Send initial "start" message to webhook
+      // Send initial "start" message to webhook - using TaskType.REPEAT
+      const welcomeMessage = "Hello! I'm ready to chat with you.";
+      await avatar.current.speak({
+        text: welcomeMessage,
+        taskType: TaskType.REPEAT,
+        taskMode: TaskMode.SYNC
+      });
+      
+      // Now send the start message to webhook
       await sendToWebhook("start");
       
       // default to voice mode
@@ -256,7 +283,15 @@ export default function InteractiveAvatar() {
     }
     
     try {
-      // First send the text to webhook and get response
+      // First make sure there are no ongoing tasks
+      try {
+        await avatar.current.interrupt();
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (e) {
+        console.warn("Failed to interrupt:", e);
+      }
+      
+      // Then send the text to webhook and get response
       await sendToWebhook(text);
       // The webhook response will be handled in sendToWebhook function
       
@@ -278,6 +313,7 @@ export default function InteractiveAvatar() {
     try {
       await avatar.current.interrupt();
       console.log("Successfully interrupted avatar speech");
+      setDebug("Successfully interrupted avatar speech");
     } catch (e) {
       console.error("Error interrupting:", e);
       setDebug(`Error interrupting: ${e instanceof Error ? e.message : String(e)}`);
@@ -287,6 +323,11 @@ export default function InteractiveAvatar() {
   async function endSession() {
     if (avatar.current) {
       try {
+        // First interrupt any ongoing tasks
+        await avatar.current.interrupt();
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Then stop the avatar completely
         await avatar.current.stopAvatar();
         console.log("Avatar session ended successfully");
       } catch (e) {
@@ -298,6 +339,7 @@ export default function InteractiveAvatar() {
     sessionIdRef.current = ""; // Reset the ref as well
     setLastRecognizedSpeech("");
     setSpeakingError("");
+    setDebug("");
   }
 
   // Test avatar speaking capability
@@ -309,6 +351,7 @@ export default function InteractiveAvatar() {
 
     try {
       console.log("Testing avatar speech with a simple message");
+      // Make sure we use REPEAT for the test too
       await avatar.current.speak({
         text: "This is a test. Can you hear me?",
         taskType: TaskType.REPEAT,
@@ -328,6 +371,16 @@ export default function InteractiveAvatar() {
     }
     
     try {
+      // First interrupt any ongoing tasks
+      if (avatar.current) {
+        try {
+          await avatar.current.interrupt();
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (e) {
+          console.warn("Failed to interrupt when changing mode:", e);
+        }
+      }
+      
       if (v === "text_mode") {
         await avatar.current?.closeVoiceChat();
         console.log("Closed voice chat mode");
