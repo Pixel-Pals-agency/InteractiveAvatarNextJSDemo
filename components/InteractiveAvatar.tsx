@@ -70,7 +70,7 @@ export default function InteractiveAvatar() {
   }
 
   // Function to send messages to webhook
-  async function sendToWebhook(message: string) {
+  async function sendToWebhook(message: string, overrideSessionId?: string) {
     setProcessingWebhook(true);
     try {
       const response = await fetch(WEBHOOK_URL, {
@@ -79,7 +79,7 @@ export default function InteractiveAvatar() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          sessionId: sessionId,
+          sessionId: overrideSessionId || sessionId,
           message: message
         }),
       });
@@ -162,8 +162,8 @@ export default function InteractiveAvatar() {
       if (res.sessionId) {
         setSessionId(res.sessionId);
         
-        // Send initial "start" message to webhook
-        await sendToWebhook("start");
+        // Send initial "start" message to webhook with the session ID directly
+        await sendToWebhook("start", res.sessionId);
       }
       
       // default to voice mode
