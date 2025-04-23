@@ -183,23 +183,27 @@ export default function InteractiveAvatar() {
       console.log(">>>>> User stopped talking:", event);
       setIsUserTalking(false);
       
-      // If there's speech content, send it to webhook
-      if (event.detail && event.detail.text) {
-        const recognizedText = event.detail.text;
-        setLastRecognizedSpeech(recognizedText);
-        console.log("Recognized speech:", recognizedText);
+      // Use the lastRecognizedSpeech state instead of event.detail.text
+      if (lastRecognizedSpeech && chatMode === "voice_mode") {
+        console.log("Processing recognized speech:", lastRecognizedSpeech);
         
-        if (chatMode === "voice_mode") {
-          await sendToWebhook(recognizedText);
+        // Interrupt any current avatar speech to prevent built-in responses
+        try {
+          await avatar.current?.interrupt();
+        } catch (e) {
+          console.warn("Failed to interrupt:", e);
         }
+        
+        // Then send to webhook
+        await sendToWebhook(lastRecognizedSpeech);
       }
     });
     
-    // Add event for speech recognition results
+    // Update to use USER_TALKING_MESSAGE instead of USER_TRANSCRIPT
     avatar.current?.on(StreamingEvents.USER_TALKING_MESSAGE, (event) => {
       console.log("Speech recognition result:", event.detail);
       if (event.detail && event.detail.message) {
-        setLastRecognizedSpeech(event.detail.text);
+        setLastRecognizedSpeech(event.detail.message);
       }
     });
     
@@ -207,7 +211,7 @@ export default function InteractiveAvatar() {
       const res = await avatar.current.createStartAvatar({
         quality: AvatarQuality.Low,
         avatarName: avatarId,
-        knowledgeId: knowledgeId,
+        knowledgeId: "", // Set to empty string to bypass HeyGen's internal knowledge processing
         voice: {
           rate: 1.5,
           emotion: VoiceEmotion.EXCITED,
@@ -232,7 +236,7 @@ export default function InteractiveAvatar() {
       
       // default to voice mode
       await avatar.current?.startVoiceChat({
-        useSilencePrompt: false,
+        useSilencePrompt: false, // Don't prompt on silence
       });
       setChatMode("voice_mode");
     } catch (error) {
@@ -254,19 +258,12 @@ export default function InteractiveAvatar() {
       // First send the text to webhook and get response
       await sendToWebhook(text);
       // The webhook response will be handled in sendToWebhook function
+      
+      // Clear the input text after sending
+      setText("");
     } catch (error) {
       console.error("Error in handleSpeak:", error);
-      // If webhook fails, still let the avatar speak the original text
-      try {
-        await avatar.current.speak({ 
-          text: text, 
-          taskType: TaskType.REPEAT, 
-          taskMode: TaskMode.SYNC 
-        });
-      } catch (e) {
-        console.error("Error making avatar speak original text:", e);
-        setDebug(`Error speaking original text: ${e instanceof Error ? e.message : String(e)}`);
-      }
+      setDebug(`Error in handleSpeak: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsLoadingRepeat(false);
     }
@@ -277,16 +274,29 @@ export default function InteractiveAvatar() {
       setDebug("Avatar API not initialized");
       return;
     }
-    await avatar.current.interrupt().catch((e) => {
-      setDebug(e.message);
-    });
+    try {
+      await avatar.current.interrupt();
+      console.log("Successfully interrupted avatar speech");
+    } catch (e) {
+      console.error("Error interrupting:", e);
+      setDebug(`Error interrupting: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
   
   async function endSession() {
-    await avatar.current?.stopAvatar();
+    if (avatar.current) {
+      try {
+        await avatar.current.stopAvatar();
+        console.log("Avatar session ended successfully");
+      } catch (e) {
+        console.error("Error ending session:", e);
+      }
+    }
     setStream(undefined);
     setSessionId("");
     sessionIdRef.current = ""; // Reset the ref as well
+    setLastRecognizedSpeech("");
+    setSpeakingError("");
   }
 
   // Test avatar speaking capability
@@ -315,12 +325,22 @@ export default function InteractiveAvatar() {
     if (v === chatMode) {
       return;
     }
-    if (v === "text_mode") {
-      avatar.current?.closeVoiceChat();
-    } else {
-      await avatar.current?.startVoiceChat();
+    
+    try {
+      if (v === "text_mode") {
+        await avatar.current?.closeVoiceChat();
+        console.log("Closed voice chat mode");
+      } else {
+        await avatar.current?.startVoiceChat({
+          useSilencePrompt: false,
+        });
+        console.log("Started voice chat mode");
+      }
+      setChatMode(v);
+    } catch (error) {
+      console.error("Error changing chat mode:", error);
+      setDebug(`Error changing chat mode: ${error instanceof Error ? error.message : String(error)}`);
     }
-    setChatMode(v);
   });
 
   const previousText = usePrevious(text);
