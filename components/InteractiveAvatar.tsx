@@ -50,6 +50,11 @@ export default function InteractiveAvatar() {
   const [isUserTalking, setIsUserTalking] = useState(false);
   const [processingWebhook, setProcessingWebhook] = useState(false);
 
+  // Function to generate a session ID if one isn't provided by the API
+  const generateSessionId = () => {
+    return `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  };
+
   function baseApiUrl() {
     return process.env.NEXT_PUBLIC_BASE_API_URL;
   }
@@ -162,20 +167,19 @@ export default function InteractiveAvatar() {
         disableIdleTimeout: true,
       });
 
+      console.log("Full response from createStartAvatar:", res);
       setData(res);
       
-      // Store session ID in both state and ref
-      if (res.sessionId) {
-        setSessionId(res.sessionId);
-        sessionIdRef.current = res.sessionId;
-        console.log("Session ID set to:", res.sessionId);
-        
-        // Send initial "start" message to webhook
-        await sendToWebhook("start");
-      } else {
-        console.error("No session ID received from createStartAvatar");
-        setDebug("Error: No session ID received");
-      }
+      // Use response session ID or generate our own
+      const currentSessionId = (res && res.sessionId) ? res.sessionId : generateSessionId();
+      
+      // Store the session ID
+      setSessionId(currentSessionId);
+      sessionIdRef.current = currentSessionId;
+      console.log("Session ID set to:", currentSessionId);
+      
+      // Send initial "start" message to webhook
+      await sendToWebhook("start");
       
       // default to voice mode
       await avatar.current?.startVoiceChat({
@@ -184,6 +188,7 @@ export default function InteractiveAvatar() {
       setChatMode("voice_mode");
     } catch (error) {
       console.error("Error starting avatar session:", error);
+      setDebug(`Error starting session: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsLoadingSession(false);
     }
