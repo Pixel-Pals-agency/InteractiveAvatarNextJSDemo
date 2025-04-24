@@ -51,7 +51,13 @@ export default function InteractiveAvatar() {
   const [processingWebhook, setProcessingWebhook] = useState(false);
   const [speakingError, setSpeakingError] = useState<string>("");
   const [lastRecognizedSpeech, setLastRecognizedSpeech] = useState<string>("");
-
+  
+  // New state and refs for custom speech recognition
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  
   // Function to generate a session ID if one isn't provided by the API
   const generateSessionId = () => {
     return `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -82,17 +88,6 @@ export default function InteractiveAvatar() {
   async function sendToWebhook(message: string) {
     setProcessingWebhook(true);
     try {
-      // First interrupt any ongoing speech to prevent conflicts
-      if (avatar.current) {
-        try {
-          await avatar.current.interrupt();
-          // Small delay to ensure interruption completes
-          await new Promise(resolve => setTimeout(resolve, 100));
-        } catch (e) {
-          console.warn("Failed to interrupt:", e);
-        }
-      }
-      
       // Log the current session ID for debugging
       console.log("Sending to webhook with sessionId:", sessionIdRef.current);
       
@@ -128,7 +123,7 @@ export default function InteractiveAvatar() {
 
         try {
           // Make sure we're not interrupting a current speech task
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise(resolve => setTimeout(resolve, 500));
           
           // Clean up the output if it contains analysis tags
           const cleanedText = textToSpeak.includes('<analysis>') 
@@ -137,11 +132,10 @@ export default function InteractiveAvatar() {
           
           console.log("Calling avatar speak with cleaned text:", cleanedText);
           
-          // Always use REPEAT to ensure the avatar only says what we tell it to
           await avatar.current.speak({ 
             text: cleanedText, 
-            taskType: TaskType.REPEAT,  // This ensures we're just repeating text, not generating responses
-            taskMode: TaskMode.SYNC     // This ensures one speech task completes before another starts
+            taskType: TaskType.REPEAT, 
+            taskMode: TaskMode.SYNC 
           });
           
           console.log("Avatar speak method called successfully");
@@ -165,6 +159,92 @@ export default function InteractiveAvatar() {
     }
   }
 
+  // Initialize and start Web Speech API recognition
+  const initializeSpeechRecognition = () => {
+    // Check if the browser supports the Web Speech API
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      setDebug("Speech recognition is not supported in this browser");
+      return;
+    }
+    
+    // Create a new SpeechRecognition instance
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    
+    // Configure recognition settings
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = language;
+    
+    // Event handlers
+    recognition.onstart = () => {
+      console.log("Speech recognition started");
+      setIsUserTalking(true);
+    };
+    
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map(result => result[0].transcript)
+        .join('');
+        
+      console.log("Speech recognition interim result:", transcript);
+      setLastRecognizedSpeech(transcript);
+    };
+    
+    recognition.onend = async () => {
+      console.log("Speech recognition ended");
+      setIsUserTalking(false);
+      
+      if (lastRecognizedSpeech && chatMode === "voice_mode") {
+        await sendToWebhook(lastRecognizedSpeech);
+      }
+      
+      // Restart recognition for continuous listening
+      if (chatMode === "voice_mode" && isRecording) {
+        try {
+          recognition.start();
+        } catch (error) {
+          console.error("Error restarting speech recognition:", error);
+        }
+      }
+    };
+    
+    recognition.onerror = (event) => {
+      console.error("Speech recognition error:", event.error);
+      setDebug(`Speech recognition error: ${event.error}`);
+      setIsUserTalking(false);
+    };
+    
+    recognitionRef.current = recognition;
+  };
+  
+  // Start recording with Web Speech API
+  const startRecording = () => {
+    if (!recognitionRef.current) {
+      initializeSpeechRecognition();
+    }
+    
+    try {
+      recognitionRef.current?.start();
+      setIsRecording(true);
+      console.log("Started recording with Web Speech API");
+    } catch (error) {
+      console.error("Error starting speech recognition:", error);
+      setDebug(`Error starting speech recognition: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  
+  // Stop recording
+  const stopRecording = () => {
+    try {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      console.log("Stopped recording with Web Speech API");
+    } catch (error) {
+      console.error("Error stopping speech recognition:", error);
+    }
+  };
+
   async function startSession() {
     setIsLoadingSession(true);
     const newToken = await fetchAccessToken();
@@ -187,51 +267,12 @@ export default function InteractiveAvatar() {
       console.log(">>>>> Stream ready:", event.detail);
       setStream(event.detail);
     });
-    avatar.current?.on(StreamingEvents.USER_START, (event) => {
-      console.log(">>>>> User started talking:", event);
-      setIsUserTalking(true);
-    });
-    avatar.current?.on(StreamingEvents.USER_STOP, async (event) => {
-      console.log(">>>>> User stopped talking:", event);
-      setIsUserTalking(false);
-      
-      // Immediately interrupt any ongoing tasks to prevent built-in responses
-      if (avatar.current) {
-        try {
-          await avatar.current.interrupt();
-          // Small delay to ensure interruption completes
-          await new Promise(resolve => setTimeout(resolve, 200));
-        } catch (e) {
-          console.warn("Failed to interrupt:", e);
-        }
-      }
-      
-      // Use the lastRecognizedSpeech state
-      if (lastRecognizedSpeech && chatMode === "voice_mode") {
-        console.log("Processing recognized speech:", lastRecognizedSpeech);
-        
-        // Send to webhook with a slight delay to ensure interruption is complete
-        await new Promise(resolve => setTimeout(resolve, 100));
-        await sendToWebhook(lastRecognizedSpeech);
-        
-        // Clear the recognized speech after processing
-        setLastRecognizedSpeech("");
-      }
-    });
-    
-    // Update to use USER_TALKING_MESSAGE instead of USER_TRANSCRIPT
-    avatar.current?.on(StreamingEvents.USER_TALKING_MESSAGE, (event) => {
-      console.log("Speech recognition result:", event.detail);
-      if (event.detail && event.detail.message) {
-        setLastRecognizedSpeech(event.detail.message);
-      }
-    });
     
     try {
       const res = await avatar.current.createStartAvatar({
         quality: AvatarQuality.Low,
         avatarName: avatarId,
-       // Set to null to not use HeyGen's knowledge base
+        knowledgeId: "", // Set to empty string to bypass HeyGen's internal knowledge processing
         voice: {
           rate: 1.5,
           emotion: VoiceEmotion.EXCITED,
@@ -251,22 +292,15 @@ export default function InteractiveAvatar() {
       sessionIdRef.current = currentSessionId;
       console.log("Session ID set to:", currentSessionId);
       
-      // Send initial "start" message to webhook - using TaskType.REPEAT
-      const welcomeMessage = "Hello! I'm ready to chat with you.";
-      await avatar.current.speak({
-        text: welcomeMessage,
-        taskType: TaskType.REPEAT,
-        taskMode: TaskMode.SYNC
-      });
-      
-      // Now send the start message to webhook
+      // Send initial "start" message to webhook
       await sendToWebhook("start");
       
-      // default to voice mode
-      await avatar.current?.startVoiceChat({
-        useSilencePrompt: false, // Don't prompt on silence
-      });
+      // Initialize our custom speech recognition instead of HeyGen's
+      initializeSpeechRecognition();
+      
+      // default to voice mode and start recording
       setChatMode("voice_mode");
+      startRecording();
     } catch (error) {
       console.error("Error starting avatar session:", error);
       setDebug(`Error starting session: ${error instanceof Error ? error.message : String(error)}`);
@@ -283,15 +317,7 @@ export default function InteractiveAvatar() {
     }
     
     try {
-      // First make sure there are no ongoing tasks
-      try {
-        await avatar.current.interrupt();
-        await new Promise(resolve => setTimeout(resolve, 100));
-      } catch (e) {
-        console.warn("Failed to interrupt:", e);
-      }
-      
-      // Then send the text to webhook and get response
+      // First send the text to webhook and get response
       await sendToWebhook(text);
       // The webhook response will be handled in sendToWebhook function
       
@@ -313,7 +339,6 @@ export default function InteractiveAvatar() {
     try {
       await avatar.current.interrupt();
       console.log("Successfully interrupted avatar speech");
-      setDebug("Successfully interrupted avatar speech");
     } catch (e) {
       console.error("Error interrupting:", e);
       setDebug(`Error interrupting: ${e instanceof Error ? e.message : String(e)}`);
@@ -321,13 +346,11 @@ export default function InteractiveAvatar() {
   }
   
   async function endSession() {
+    // Stop our custom speech recognition
+    stopRecording();
+    
     if (avatar.current) {
       try {
-        // First interrupt any ongoing tasks
-        await avatar.current.interrupt();
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        // Then stop the avatar completely
         await avatar.current.stopAvatar();
         console.log("Avatar session ended successfully");
       } catch (e) {
@@ -339,7 +362,6 @@ export default function InteractiveAvatar() {
     sessionIdRef.current = ""; // Reset the ref as well
     setLastRecognizedSpeech("");
     setSpeakingError("");
-    setDebug("");
   }
 
   // Test avatar speaking capability
@@ -351,7 +373,6 @@ export default function InteractiveAvatar() {
 
     try {
       console.log("Testing avatar speech with a simple message");
-      // Make sure we use REPEAT for the test too
       await avatar.current.speak({
         text: "This is a test. Can you hear me?",
         taskType: TaskType.REPEAT,
@@ -371,24 +392,12 @@ export default function InteractiveAvatar() {
     }
     
     try {
-      // First interrupt any ongoing tasks
-      if (avatar.current) {
-        try {
-          await avatar.current.interrupt();
-          await new Promise(resolve => setTimeout(resolve, 100));
-        } catch (e) {
-          console.warn("Failed to interrupt when changing mode:", e);
-        }
-      }
-      
       if (v === "text_mode") {
-        await avatar.current?.closeVoiceChat();
-        console.log("Closed voice chat mode");
+        // Stop our custom speech recognition when switching to text mode
+        stopRecording();
       } else {
-        await avatar.current?.startVoiceChat({
-          useSilencePrompt: false,
-        });
-        console.log("Started voice chat mode");
+        // Start our custom speech recognition when switching to voice mode
+        startRecording();
       }
       setChatMode(v);
     } catch (error) {
@@ -421,6 +430,15 @@ export default function InteractiveAvatar() {
       };
     }
   }, [mediaStream, stream]);
+
+  // Control the recording status when chat mode changes
+  useEffect(() => {
+    if (chatMode === "voice_mode" && stream) {
+      startRecording();
+    } else if (chatMode === "text_mode") {
+      stopRecording();
+    }
+  }, [chatMode, stream]);
 
   return (
     <div className="w-full flex flex-col gap-4">
@@ -568,6 +586,9 @@ export default function InteractiveAvatar() {
                 {isUserTalking && (
                   <Chip color="success" className="animate-pulse">Listening</Chip>
                 )}
+                {isRecording && !isUserTalking && (
+                  <Chip color="primary">Ready for voice input</Chip>
+                )}
                 {processingWebhook && (
                   <Chip color="warning">Processing</Chip>
                 )}
@@ -582,6 +603,24 @@ export default function InteractiveAvatar() {
                   </p>
                 </div>
               )}
+              <div className="flex justify-center gap-2 mt-2">
+                {!isRecording ? (
+                  <Button 
+                    color="success" 
+                    onClick={startRecording} 
+                    disabled={!stream}
+                  >
+                    Start Voice Input
+                  </Button>
+                ) : (
+                  <Button 
+                    color="danger" 
+                    onClick={stopRecording}
+                  >
+                    Stop Voice Input
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         </CardFooter>
