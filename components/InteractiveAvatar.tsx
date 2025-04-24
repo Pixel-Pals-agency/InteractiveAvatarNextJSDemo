@@ -132,30 +132,49 @@ export default function InteractiveAvatar() {
     return "";
   }
 
-  // Function to send messages to webhook
+  // Function to send messages to webhook with improved debugging
   async function sendToWebhook(message: string) {
+    console.log("sendToWebhook called with:", message);
+    
+    if (!message || message.trim() === "") {
+      console.log("Empty message, not sending to webhook");
+      return;
+    }
+    
+    if (!sessionIdRef.current) {
+      console.error("No session ID available, cannot send to webhook");
+      setDebug("Error: No session ID available for webhook");
+      return;
+    }
+    
     setProcessingWebhook(true);
     try {
       // Log the current session ID for debugging
       console.log("Sending to webhook with sessionId:", sessionIdRef.current);
+      
+      const payload = {
+        sessionId: sessionIdRef.current,
+        message: message
+      };
+      
+      console.log("Webhook payload:", payload);
       
       const response = await fetch(WEBHOOK_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          sessionId: sessionIdRef.current,
-          message: message
-        }),
+        body: JSON.stringify(payload),
       });
+
+      console.log("Webhook response status:", response.status);
 
       if (!response.ok) {
         throw new Error(`Webhook response error: ${response.status}`);
       }
 
       const responseData = await response.json();
-      console.log("Webhook response:", responseData);
+      console.log("Webhook response data:", responseData);
       
       // Have the avatar speak the response
       if (responseData && (responseData.response || responseData.output)) {
@@ -197,7 +216,7 @@ export default function InteractiveAvatar() {
           
           // Restart speech recognition after avatar is done talking
           if (chatMode === "voice_mode" && !isAvatarTalking) {
-            startRecording();
+            setTimeout(() => startRecording(), 500);
           }
           
           console.log("Avatar speak method called successfully");
@@ -210,7 +229,7 @@ export default function InteractiveAvatar() {
           
           // Restart speech recognition if avatar fails to speak
           if (chatMode === "voice_mode") {
-            startRecording();
+            setTimeout(() => startRecording(), 500);
           }
         }
       } else {
@@ -227,7 +246,7 @@ export default function InteractiveAvatar() {
     }
   }
 
-  // Initialize and start Web Speech API recognition
+  // Initialize and start Web Speech API recognition with improved configuration
   const initializeSpeechRecognition = () => {
     // Check if the browser supports the Web Speech API
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
@@ -240,36 +259,81 @@ export default function InteractiveAvatar() {
     const recognition = new SpeechRecognitionConstructor();
     
     // Configure recognition settings
-    recognition.continuous = false;
+    recognition.continuous = true; // Changed to true for better results
     recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
     recognition.lang = language;
     
-    // Event handlers
+    // Add logging for configuration
+    console.log("Speech recognition configured:", {
+      continuous: recognition.continuous,
+      interimResults: recognition.interimResults,
+      lang: recognition.lang
+    });
+    
+    // Event handlers with improved logging
     recognition.onstart = () => {
       console.log("Speech recognition started");
       setIsUserTalking(true);
     };
     
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      const transcript = Array.from(event.results)
-        .map(result => result[0].transcript)
-        .join('');
+      // Find the most recent final result or use interim if none final yet
+      let finalTranscript = '';
+      let interimTranscript = '';
+      
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+          console.log("Final transcript:", finalTranscript);
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+      
+      // If we have a final transcript, use it
+      if (finalTranscript) {
+        console.log("Setting final transcript:", finalTranscript);
+        setLastRecognizedSpeech(finalTranscript);
         
-      console.log("Speech recognition interim result:", transcript);
-      setLastRecognizedSpeech(transcript);
+        // For continuous mode, we might want to send final results immediately
+        if (chatMode === "voice_mode" && !isAvatarTalking && finalTranscript.trim() !== "") {
+          console.log("Final result detected, sending to webhook");
+          sendToWebhook(finalTranscript);
+          recognition.stop(); // Stop after a final result to process it
+        }
+      } else if (interimTranscript) {
+        // Just show interim results to the user
+        console.log("Setting interim transcript:", interimTranscript);
+        setLastRecognizedSpeech(interimTranscript);
+      }
     };
     
     recognition.onend = async () => {
       console.log("Speech recognition ended");
       setIsUserTalking(false);
       
+      // Get the current transcript before any state changes
+      const currentTranscript = lastRecognizedSpeech;
+      
       // Only send to webhook if we have recognized speech and avatar is not currently talking
-      if (lastRecognizedSpeech && chatMode === "voice_mode" && !isAvatarTalking) {
-        const currentTranscript = lastRecognizedSpeech;
-        setLastRecognizedSpeech(""); // Clear the transcript for next recognition
+      // Note: with the improved onresult handler, this may be redundant but keeping as fallback
+      if (currentTranscript && currentTranscript.trim() !== "" && chatMode === "voice_mode" && !isAvatarTalking) {
+        console.log("Sending transcript to webhook from onend:", currentTranscript);
+        
+        // Clear the transcript for next recognition AFTER capturing it
+        setLastRecognizedSpeech("");
         
         // Send the transcribed text to webhook
         await sendToWebhook(currentTranscript);
+      } else {
+        console.log("Not sending to webhook from onend:", { 
+          hasTranscript: !!currentTranscript, 
+          transcriptLength: currentTranscript?.length || 0,
+          chatMode, 
+          isAvatarTalking 
+        });
       }
       
       // Restart recognition for continuous listening if not stopped manually and avatar is not talking
@@ -277,6 +341,7 @@ export default function InteractiveAvatar() {
         try {
           setTimeout(() => {
             if (isRecording && !isAvatarTalking) {
+              console.log("Restarting speech recognition");
               recognition.start();
             }
           }, 500);
@@ -319,9 +384,11 @@ export default function InteractiveAvatar() {
   // Stop recording
   const stopRecording = () => {
     try {
-      recognitionRef.current?.stop();
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+        console.log("Stopped recording with Web Speech API");
+      }
       setIsRecording(false);
-      console.log("Stopped recording with Web Speech API");
     } catch (error) {
       console.error("Error stopping speech recognition:", error);
     }
@@ -351,7 +418,7 @@ export default function InteractiveAvatar() {
       setIsAvatarTalking(false);
       // Resume speech recognition after avatar stops talking
       if (chatMode === "voice_mode" && !isRecording) {
-        setTimeout(startRecording, 500);
+        setTimeout(() => startRecording(), 500);
       }
     });
     
@@ -440,7 +507,7 @@ export default function InteractiveAvatar() {
       
       // Resume speech recognition after interrupting
       if (chatMode === "voice_mode" && !isRecording) {
-        setTimeout(startRecording, 500);
+        setTimeout(() => startRecording(), 500);
       }
     } catch (e) {
       console.error("Error interrupting:", e);
@@ -494,7 +561,7 @@ export default function InteractiveAvatar() {
       
       // Resume speech recognition after test
       if (chatMode === "voice_mode" && !isRecording) {
-        setTimeout(startRecording, 500);
+        setTimeout(() => startRecording(), 500);
       }
       
       console.log("Test speech completed successfully");
@@ -506,7 +573,7 @@ export default function InteractiveAvatar() {
       
       // Resume speech recognition after error
       if (chatMode === "voice_mode" && !isRecording) {
-        setTimeout(startRecording, 500);
+        setTimeout(() => startRecording(), 500);
       }
     }
   }
