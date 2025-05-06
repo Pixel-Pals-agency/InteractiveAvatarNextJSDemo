@@ -93,7 +93,7 @@ export default function InteractiveAvatar() {
   const [text, setText] = useState<string>("");
   const mediaStream = useRef<HTMLVideoElement>(null);
   const avatar = useRef<StreamingAvatar | null>(null);
-  const [chatMode, setChatMode] = useState("voice_mode"); // Changed default to voice_mode
+  const [chatMode, setChatMode] = useState("voice_mode");
   const [isUserTalking, setIsUserTalking] = useState(false);
   const [processingWebhook, setProcessingWebhook] = useState(false);
   const [speakingError, setSpeakingError] = useState<string>("");
@@ -105,6 +105,9 @@ export default function InteractiveAvatar() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const [isAvatarTalking, setIsAvatarTalking] = useState(false);
+  
+  // New ref to track if we need to restart recognition after avatar stops
+  const shouldRestartRecognitionRef = useRef(false);
   
   // Function to generate a session ID if one isn't provided by the API
   const generateSessionId = () => {
@@ -199,11 +202,16 @@ export default function InteractiveAvatar() {
           
           console.log("Calling avatar speak with cleaned text:", cleanedText);
           
-          // Make sure speech recognition is paused while avatar is talking
-          if (recognitionRef.current) {
+          // Make sure speech recognition is completely stopped before avatar talks
+          if (recognitionRef.current && isRecording) {
+            console.log("Stopping speech recognition before avatar speaks");
             stopRecording();
+            
+            // Set flag to restart recognition after avatar stops talking
+            shouldRestartRecognitionRef.current = true;
           }
           
+          // Set the avatar talking state before speaking
           setIsAvatarTalking(true);
           
           await avatar.current.speak({ 
@@ -212,14 +220,12 @@ export default function InteractiveAvatar() {
             taskMode: TaskMode.SYNC 
           });
           
+          // Don't rely only on events - set state here too to ensure it updates
           setIsAvatarTalking(false);
           
-          // Restart speech recognition after avatar is done talking
-          if (!isAvatarTalking) { // Removed chatMode check
-            setTimeout(() => startRecording(), 500);
-          }
+          console.log("Avatar speak method completed successfully");
           
-          console.log("Avatar speak method called successfully");
+          // We'll restart speech recognition in the AVATAR_STOP_TALKING event handler
         } catch (error) {
           console.error("Error making avatar speak:", error);
           const errorMessage = error instanceof Error ? error.message : String(error);
@@ -227,8 +233,11 @@ export default function InteractiveAvatar() {
           setDebug(`Avatar speak error: ${errorMessage}`);
           setIsAvatarTalking(false);
           
-          // Restart speech recognition if avatar fails to speak
-          setTimeout(() => startRecording(), 500);
+          // Restart speech recognition if avatar fails to speak and we're in voice mode
+          if (chatMode === "voice_mode") {
+            console.log("Restarting speech recognition after avatar speaking error");
+            setTimeout(() => startRecording(), 1000);
+          }
         }
       } else {
         console.warn("No response text found in webhook response data", responseData);
@@ -257,7 +266,7 @@ export default function InteractiveAvatar() {
     const recognition = new SpeechRecognitionConstructor();
     
     // Configure recognition settings
-    recognition.continuous = true; // Changed to true for better results
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
     recognition.lang = language;
@@ -273,9 +282,16 @@ export default function InteractiveAvatar() {
     recognition.onstart = () => {
       console.log("Speech recognition started");
       setIsUserTalking(true);
+      setIsRecording(true);
     };
     
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      // Skip processing results if avatar is talking
+      if (isAvatarTalking) {
+        console.log("Skipping speech recognition results while avatar is talking");
+        return;
+      }
+      
       // Find the most recent final result or use interim if none final yet
       let finalTranscript = '';
       let interimTranscript = '';
@@ -295,11 +311,13 @@ export default function InteractiveAvatar() {
         console.log("Setting final transcript:", finalTranscript);
         setLastRecognizedSpeech(finalTranscript);
         
-        // Send final results immediately regardless of chat mode
-        if (finalTranscript.trim() !== "" && !isAvatarTalking) {
+        // Send final results immediately
+        if (finalTranscript.trim() !== "") {
           console.log("Final result detected, sending to webhook");
           sendToWebhook(finalTranscript);
-          recognition.stop(); // Stop after a final result to process it
+          
+          // Stop recognition briefly to reset the recognition context
+          recognition.stop();
         }
       } else if (interimTranscript) {
         // Just show interim results to the user
@@ -311,12 +329,12 @@ export default function InteractiveAvatar() {
     recognition.onend = async () => {
       console.log("Speech recognition ended");
       setIsUserTalking(false);
+      setIsRecording(false);
       
       // Get the current transcript before any state changes
       const currentTranscript = lastRecognizedSpeech;
       
-      // Only send to webhook if we have recognized speech and avatar is not currently talking
-      // Removed chatMode check to ensure it sends regardless of UI mode
+      // If we have a transcript that hasn't been sent yet, send it now
       if (currentTranscript && currentTranscript.trim() !== "" && !isAvatarTalking) {
         console.log("Sending transcript to webhook from onend:", currentTranscript);
         
@@ -325,24 +343,19 @@ export default function InteractiveAvatar() {
         
         // Send the transcribed text to webhook
         await sendToWebhook(currentTranscript);
-      } else {
-        console.log("Not sending to webhook from onend:", { 
-          hasTranscript: !!currentTranscript, 
-          transcriptLength: currentTranscript?.length || 0,
-          chatMode, 
-          isAvatarTalking 
-        });
       }
       
-      // Restart recognition for continuous listening if not stopped manually and avatar is not talking
-      if (isRecording && !isAvatarTalking) {
+      // Only restart recognition if we're not in avatar talking state and in voice mode
+      if (chatMode === "voice_mode" && !isAvatarTalking) {
         try {
+          console.log("Auto-restarting speech recognition after end event");
           setTimeout(() => {
-            if (isRecording && !isAvatarTalking) {
+            if (chatMode === "voice_mode" && !isAvatarTalking) {
               console.log("Restarting speech recognition");
               recognition.start();
+              setIsRecording(true);
             }
-          }, 500);
+          }, 1000);
         } catch (error) {
           console.error("Error restarting speech recognition:", error);
         }
@@ -353,6 +366,7 @@ export default function InteractiveAvatar() {
       console.error("Speech recognition error:", event.error);
       setDebug(`Speech recognition error: ${event.error}`);
       setIsUserTalking(false);
+      setIsRecording(false);
     };
     
     recognitionRef.current = recognition;
@@ -360,6 +374,7 @@ export default function InteractiveAvatar() {
   
   // Start recording with Web Speech API
   const startRecording = () => {
+    // Don't start if avatar is talking
     if (isAvatarTalking) {
       console.log("Cannot start recording while avatar is talking");
       return;
@@ -370,9 +385,15 @@ export default function InteractiveAvatar() {
     }
     
     try {
+      // Check if we already have an existing recognition session
+      if (isRecording) {
+        console.log("Speech recognition is already running");
+        return;
+      }
+      
+      console.log("Starting speech recognition");
       recognitionRef.current?.start();
       setIsRecording(true);
-      console.log("Started recording with Web Speech API");
     } catch (error) {
       console.error("Error starting speech recognition:", error);
       setDebug(`Error starting speech recognition: ${error instanceof Error ? error.message : String(error)}`);
@@ -382,13 +403,16 @@ export default function InteractiveAvatar() {
   // Stop recording
   const stopRecording = () => {
     try {
-      if (recognitionRef.current) {
+      if (recognitionRef.current && isRecording) {
+        console.log("Stopping speech recognition");
         recognitionRef.current.stop();
-        console.log("Stopped recording with Web Speech API");
+        setIsRecording(false);
+      } else {
+        console.log("Speech recognition is not running, nothing to stop");
       }
-      setIsRecording(false);
     } catch (error) {
       console.error("Error stopping speech recognition:", error);
+      setIsRecording(false); // Force state update even if there's an error
     }
   };
 
@@ -404,19 +428,39 @@ export default function InteractiveAvatar() {
     // Add event listeners for avatar talking state
     avatar.current.on(StreamingEvents.AVATAR_START_TALKING, (e) => {
       console.log("Avatar started talking", e);
-      setIsAvatarTalking(true);
-      // Stop speech recognition while avatar is talking
+      
+      // First, ensure speech recognition is stopped
       if (recognitionRef.current && isRecording) {
+        console.log("Stopping speech recognition due to avatar start talking");
         stopRecording();
+      }
+      
+      // Then update the avatar talking state
+      setIsAvatarTalking(true);
+      
+      // Set flag to restart recognition after avatar stops talking (if in voice mode)
+      if (chatMode === "voice_mode") {
+        shouldRestartRecognitionRef.current = true;
       }
     });
     
     avatar.current.on(StreamingEvents.AVATAR_STOP_TALKING, (e) => {
       console.log("Avatar stopped talking", e);
       setIsAvatarTalking(false);
-      // Resume speech recognition after avatar stops talking
-      // Removed chatMode check to ensure it always resumes
-      setTimeout(() => startRecording(), 500);
+      
+      // Check if we should restart speech recognition
+      if (shouldRestartRecognitionRef.current && chatMode === "voice_mode") {
+        console.log("Restarting speech recognition after avatar stopped talking");
+        // Add a delay to make sure the avatar has fully stopped talking
+        setTimeout(() => {
+          if (!isAvatarTalking && chatMode === "voice_mode") {
+            startRecording();
+          }
+        }, 1000);
+        
+        // Reset the flag
+        shouldRestartRecognitionRef.current = false;
+      }
     });
     
     avatar.current.on(StreamingEvents.STREAM_DISCONNECTED, () => {
@@ -456,7 +500,7 @@ export default function InteractiveAvatar() {
       // Send initial "start" message to webhook
       await sendToWebhook("start");
       
-      // Initialize our custom speech recognition instead of HeyGen's
+      // Initialize our custom speech recognition
       initializeSpeechRecognition();
       
       // Always set to voice mode when starting session
@@ -464,7 +508,9 @@ export default function InteractiveAvatar() {
       
       // Give a bit of time for everything to initialize before starting recording
       setTimeout(() => {
-        startRecording();
+        if (chatMode === "voice_mode" && !isAvatarTalking) {
+          startRecording();
+        }
       }, 1000);
     } catch (error) {
       console.error("Error starting avatar session:", error);
@@ -506,9 +552,11 @@ export default function InteractiveAvatar() {
       console.log("Successfully interrupted avatar speech");
       setIsAvatarTalking(false);
       
-      // Resume speech recognition after interrupting
-      // Removed chatMode check
-      setTimeout(() => startRecording(), 500);
+      // Resume speech recognition after interrupting if in voice mode
+      if (chatMode === "voice_mode") {
+        console.log("Restarting speech recognition after interruption");
+        setTimeout(() => startRecording(), 1000);
+      }
     } catch (e) {
       console.error("Error interrupting:", e);
       setDebug(`Error interrupting: ${e instanceof Error ? e.message : String(e)}`);
@@ -533,6 +581,7 @@ export default function InteractiveAvatar() {
     setLastRecognizedSpeech("");
     setSpeakingError("");
     setIsAvatarTalking(false);
+    shouldRestartRecognitionRef.current = false;
   }
 
   // Test avatar speaking capability
@@ -549,6 +598,11 @@ export default function InteractiveAvatar() {
         stopRecording();
       }
       
+      // Set flag to restart recognition after test (if in voice mode)
+      if (chatMode === "voice_mode") {
+        shouldRestartRecognitionRef.current = true;
+      }
+      
       setIsAvatarTalking(true);
       
       await avatar.current.speak({
@@ -559,10 +613,6 @@ export default function InteractiveAvatar() {
       
       setIsAvatarTalking(false);
       
-      // Resume speech recognition after test
-      // Simplified to always restart regardless of chat mode
-      setTimeout(() => startRecording(), 500);
-      
       console.log("Test speech completed successfully");
       setDebug("Test speech completed successfully");
     } catch (error) {
@@ -571,7 +621,9 @@ export default function InteractiveAvatar() {
       setIsAvatarTalking(false);
       
       // Resume speech recognition after error
-      setTimeout(() => startRecording(), 500);
+      if (chatMode === "voice_mode") {
+        setTimeout(() => startRecording(), 1000);
+      }
     }
   }
 
@@ -581,14 +633,18 @@ export default function InteractiveAvatar() {
     }
     
     try {
+      // Update mode first
+      setChatMode(v);
+      
+      // Handle mode-specific actions
       if (v === "text_mode") {
         // Stop our custom speech recognition when switching to text mode
         stopRecording();
-      } else if (!isAvatarTalking) {
-        // Start our custom speech recognition when switching to voice mode (only if avatar is not talking)
-        startRecording();
+        shouldRestartRecognitionRef.current = false;
+      } else if (v === "voice_mode" && !isAvatarTalking) {
+        // Start our custom speech recognition when switching to voice mode
+        setTimeout(() => startRecording(), 500);
       }
-      setChatMode(v);
     } catch (error) {
       console.error("Error changing chat mode:", error);
       setDebug(`Error changing chat mode: ${error instanceof Error ? error.message : String(error)}`);
@@ -620,15 +676,26 @@ export default function InteractiveAvatar() {
     }
   }, [mediaStream, stream]);
 
-  // Updated effect to always start recording when appropriate, regardless of chat mode
+  // Handle changes to avatar talking state
   useEffect(() => {
-    if (stream && !isAvatarTalking) {
-      startRecording();
-    } else if (isAvatarTalking) {
-      stopRecording();
+    if (isAvatarTalking) {
+      // Make sure speech recognition is stopped when avatar starts talking
+      if (isRecording) {
+        console.log("Effect: Stopping speech recognition because avatar started talking");
+        stopRecording();
+      }
+    } else if (chatMode === "voice_mode" && !isAvatarTalking && shouldRestartRecognitionRef.current) {
+      // Restart speech recognition when avatar stops talking (if flag is set)
+      console.log("Effect: Avatar stopped talking, restarting speech recognition");
+      setTimeout(() => {
+        if (!isAvatarTalking && chatMode === "voice_mode") {
+          startRecording();
+          shouldRestartRecognitionRef.current = false;
+        }
+      }, 1000);
     }
-  }, [stream, isAvatarTalking]);
-
+  }, [isAvatarTalking, chatMode]);
+  
   return (
     <div className="w-full flex flex-col gap-4">
       <Card>
