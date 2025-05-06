@@ -83,7 +83,7 @@ interface WebhookResponse {
   output?: string;
 }
 
-// Custom debounce function to avoid lodash dependency
+// Custom debounce function
 const debounce = <T extends (...args: any[]) => any>(
   func: T,
   wait: number
@@ -148,7 +148,7 @@ export default function InteractiveAvatar() {
     }
   }, []);
 
-  // Simple sanitization to avoid sanitize-html dependency
+  // Simple sanitization
   const sanitizeInput = (input: string): string => {
     return input.replace(/[<>]/g, "").trim();
   };
@@ -535,6 +535,7 @@ export default function InteractiveAvatar() {
     }
   }, [stream]);
 
+  // Ensure all JSX elements are properly closed
   return (
     <div className="w-full flex flex-col gap-4">
       <Card>
@@ -589,24 +590,19 @@ export default function InteractiveAvatar() {
           ) : !isLoadingSession ? (
             <div className="h-full justify-center items-center flex flex-col gap-8 w-[500px] self-center">
               <div className="flex flex-col gap-2 w-full">
-                <p className="text-sm font-medium leading-none">
-                  Custom Knowledge ID (optional)
-                </p>
+                <p className="text-sm font-medium leading-none">Custom Knowledge ID (optional)</p>
                 <Input
                   aria-label="Custom Knowledge ID"
                   placeholder="Enter a custom knowledge ID"
                   value={knowledgeId}
                   onChange={(e) => setKnowledgeId(e.target.value)}
                 />
-                <p className="text-sm font-medium leading-none">
-                  Custom Avatar ID (optional)
-                </p>
+                <p className="text-sm font-medium leading-none">Custom Avatar ID (optional)</p>
                 <Input
                   aria-label="Custom Avatar ID"
                   placeholder="Enter a custom avatar ID"
                   value={avatarId}
                   onChange={(e) => setAvatarId(e.target.value)}
- KeyboardEventHandler<HTMLInputElement>>()}
                 />
                 <Select
                   aria-label="Select example avatar"
@@ -615,10 +611,7 @@ export default function InteractiveAvatar() {
                   onChange={(e) => setAvatarId(e.target.value)}
                 >
                   {AVATARS.map((avatar) => (
-                    <SelectItem
-                      key={avatar.avatar_id}
-                      textValue={avatar.avatar_id}
-                    >
+                    <SelectItem key={avatar.avatar_id} textValue={avatar.avatar_id}>
                       {avatar.name}
                     </SelectItem>
                   ))}
@@ -627,7 +620,7 @@ export default function InteractiveAvatar() {
                   label="Select language"
                   aria-label="Select language"
                   placeholder="Select language"
-                  className="max-w-xs" 
+                  className="max-w-xs"
                   selectedKeys={[language]}
                   onChange={(e) => setLanguage(e.target.value)}
                 >
@@ -661,11 +654,7 @@ export default function InteractiveAvatar() {
             <Tab key="voice_mode" title="Voice mode" />
           </Tabs>
           <div aria-live="polite" className="sr-only">
-            {isAvatarTalking
-              ? "Avatar is speaking"
-              : isRecording
-              ? "Listening for voice input"
-              : "Idle"}
+            {isAvatarTalking ? "Avatar is speaking" : isRecording ? "Listening for voice input" : "Idle"}
           </div>
           {chatMode === "text_mode" ? (
             <div className="w-full flex relative">
@@ -678,9 +667,7 @@ export default function InteractiveAvatar() {
                 setInput={setText}
                 onSubmit={handleSpeak}
               />
-              {text && (
-                <Chip className="absolute right-16 top-3">Listening</Chip>
-              )}
+              {text && <Chip className="absolute right-16 top-3">Listening</Chip>}
               {isAvatarTalking && (
                 <Chip color="primary" className="absolute right-32 top-3">
                   Avatar Speaking
@@ -719,8 +706,7 @@ export default function InteractiveAvatar() {
               {lastRecognizedSpeech && !isAvatarTalking && (
                 <div className="p-2 bg-gray-100 rounded-lg text-center max-w-lg mx-auto">
                   <p className="text-sm text-gray-700">
-                    <span className="font-semibold">You said:</span>{" "}
-                    {lastRecognizedSpeech}
+                    <span className="font-semibold">You said:</span> {lastRecognizedSpeech}
                   </p>
                 </div>
               )}
@@ -731,11 +717,7 @@ export default function InteractiveAvatar() {
                     color="success"
                     onClick={startRecording}
                     isDisabled={!stream || isAvatarTalking}
-                    title={
-                      isAvatarTalking
-                        ? "Cannot start while avatar is speaking"
-                        : undefined
-                    }
+                    title={isAvatarTalking ? "Cannot start while avatar is speaking" : undefined}
                   >
                     Start Voice Input
                   </Button>
@@ -745,11 +727,7 @@ export default function InteractiveAvatar() {
                     color="danger"
                     onClick={stopRecording}
                     isDisabled={isAvatarTalking}
-                    title={
-                      isAvatarTalking
-                        ? "Cannot stop while avatar is speaking"
-                        : undefined
-                    }
+                    title={isAvatarTalking ? "Cannot stop while avatar is speaking" : undefined}
                   >
                     Stop Voice Input
                   </Button>
