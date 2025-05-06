@@ -93,7 +93,7 @@ export default function InteractiveAvatar() {
   const [text, setText] = useState<string>("");
   const mediaStream = useRef<HTMLVideoElement>(null);
   const avatar = useRef<StreamingAvatar | null>(null);
-  const [chatMode, setChatMode] = useState("text_mode");
+  const [chatMode, setChatMode] = useState("voice_mode"); // Changed default to voice_mode
   const [isUserTalking, setIsUserTalking] = useState(false);
   const [processingWebhook, setProcessingWebhook] = useState(false);
   const [speakingError, setSpeakingError] = useState<string>("");
@@ -215,7 +215,7 @@ export default function InteractiveAvatar() {
           setIsAvatarTalking(false);
           
           // Restart speech recognition after avatar is done talking
-          if (chatMode === "voice_mode" && !isAvatarTalking) {
+          if (!isAvatarTalking) { // Removed chatMode check
             setTimeout(() => startRecording(), 500);
           }
           
@@ -228,9 +228,7 @@ export default function InteractiveAvatar() {
           setIsAvatarTalking(false);
           
           // Restart speech recognition if avatar fails to speak
-          if (chatMode === "voice_mode") {
-            setTimeout(() => startRecording(), 500);
-          }
+          setTimeout(() => startRecording(), 500);
         }
       } else {
         console.warn("No response text found in webhook response data", responseData);
@@ -297,8 +295,8 @@ export default function InteractiveAvatar() {
         console.log("Setting final transcript:", finalTranscript);
         setLastRecognizedSpeech(finalTranscript);
         
-        // For continuous mode, we might want to send final results immediately
-        if (chatMode === "voice_mode" && !isAvatarTalking && finalTranscript.trim() !== "") {
+        // Send final results immediately regardless of chat mode
+        if (finalTranscript.trim() !== "" && !isAvatarTalking) {
           console.log("Final result detected, sending to webhook");
           sendToWebhook(finalTranscript);
           recognition.stop(); // Stop after a final result to process it
@@ -318,8 +316,8 @@ export default function InteractiveAvatar() {
       const currentTranscript = lastRecognizedSpeech;
       
       // Only send to webhook if we have recognized speech and avatar is not currently talking
-      // Note: with the improved onresult handler, this may be redundant but keeping as fallback
-      if (currentTranscript && currentTranscript.trim() !== "" && chatMode === "voice_mode" && !isAvatarTalking) {
+      // Removed chatMode check to ensure it sends regardless of UI mode
+      if (currentTranscript && currentTranscript.trim() !== "" && !isAvatarTalking) {
         console.log("Sending transcript to webhook from onend:", currentTranscript);
         
         // Clear the transcript for next recognition AFTER capturing it
@@ -337,7 +335,7 @@ export default function InteractiveAvatar() {
       }
       
       // Restart recognition for continuous listening if not stopped manually and avatar is not talking
-      if (chatMode === "voice_mode" && isRecording && !isAvatarTalking) {
+      if (isRecording && !isAvatarTalking) {
         try {
           setTimeout(() => {
             if (isRecording && !isAvatarTalking) {
@@ -417,9 +415,8 @@ export default function InteractiveAvatar() {
       console.log("Avatar stopped talking", e);
       setIsAvatarTalking(false);
       // Resume speech recognition after avatar stops talking
-      if (chatMode === "voice_mode" && !isRecording) {
-        setTimeout(() => startRecording(), 500);
-      }
+      // Removed chatMode check to ensure it always resumes
+      setTimeout(() => startRecording(), 500);
     });
     
     avatar.current.on(StreamingEvents.STREAM_DISCONNECTED, () => {
@@ -462,9 +459,13 @@ export default function InteractiveAvatar() {
       // Initialize our custom speech recognition instead of HeyGen's
       initializeSpeechRecognition();
       
-      // default to voice mode and start recording
+      // Always set to voice mode when starting session
       setChatMode("voice_mode");
-      startRecording();
+      
+      // Give a bit of time for everything to initialize before starting recording
+      setTimeout(() => {
+        startRecording();
+      }, 1000);
     } catch (error) {
       console.error("Error starting avatar session:", error);
       setDebug(`Error starting session: ${error instanceof Error ? error.message : String(error)}`);
@@ -506,9 +507,8 @@ export default function InteractiveAvatar() {
       setIsAvatarTalking(false);
       
       // Resume speech recognition after interrupting
-      if (chatMode === "voice_mode" && !isRecording) {
-        setTimeout(() => startRecording(), 500);
-      }
+      // Removed chatMode check
+      setTimeout(() => startRecording(), 500);
     } catch (e) {
       console.error("Error interrupting:", e);
       setDebug(`Error interrupting: ${e instanceof Error ? e.message : String(e)}`);
@@ -560,9 +560,8 @@ export default function InteractiveAvatar() {
       setIsAvatarTalking(false);
       
       // Resume speech recognition after test
-      if (chatMode === "voice_mode" && !isRecording) {
-        setTimeout(() => startRecording(), 500);
-      }
+      // Simplified to always restart regardless of chat mode
+      setTimeout(() => startRecording(), 500);
       
       console.log("Test speech completed successfully");
       setDebug("Test speech completed successfully");
@@ -572,9 +571,7 @@ export default function InteractiveAvatar() {
       setIsAvatarTalking(false);
       
       // Resume speech recognition after error
-      if (chatMode === "voice_mode" && !isRecording) {
-        setTimeout(() => startRecording(), 500);
-      }
+      setTimeout(() => startRecording(), 500);
     }
   }
 
@@ -623,14 +620,14 @@ export default function InteractiveAvatar() {
     }
   }, [mediaStream, stream]);
 
-  // Control the recording status when chat mode changes or avatar talking state changes
+  // Updated effect to always start recording when appropriate, regardless of chat mode
   useEffect(() => {
-    if (chatMode === "voice_mode" && stream && !isAvatarTalking) {
+    if (stream && !isAvatarTalking) {
       startRecording();
-    } else if (chatMode === "text_mode" || isAvatarTalking) {
+    } else if (isAvatarTalking) {
       stopRecording();
     }
-  }, [chatMode, stream, isAvatarTalking]);
+  }, [stream, isAvatarTalking]);
 
   return (
     <div className="w-full flex flex-col gap-4">
