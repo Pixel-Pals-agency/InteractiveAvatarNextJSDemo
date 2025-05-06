@@ -22,14 +22,14 @@ import {
 } from "@nextui-org/react";
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { usePrevious } from "ahooks";
-import { debounce } from "lodash";
-import sanitizeHtml from "sanitize-html";
 
 import InteractiveAvatarTextInput from "./InteractiveAvatarTextInput";
 import { AVATARS, STT_LANGUAGE_LIST } from "@/app/lib/constants";
 
-// Use environment variable for webhook URL
-const WEBHOOK_URL = process.env.NEXT_PUBLIC_WEBHOOK_URL || "https://n8n.fastynet.click/webhook/b68e20df-39d6-4baa-a862-5b5f6b9bbcc6/chat";
+// Fallback webhook URL if environment variable is not set
+const WEBHOOK_URL =
+  process.env.NEXT_PUBLIC_WEBHOOK_URL ||
+  "https://n8n.fastynet.click/webhook/b68e20df-39d6-4baa-a862-5b5f6b9bbcc6/chat";
 
 // Interfaces for Web Speech API
 interface SpeechRecognitionEvent extends Event {
@@ -83,6 +83,18 @@ interface WebhookResponse {
   output?: string;
 }
 
+// Custom debounce function to avoid lodash dependency
+const debounce = <T extends (...args: any[]) => any>(
+  func: T,
+  wait: number
+): ((...args: Parameters<T>) => void) => {
+  let timeout: NodeJS.Timeout | null = null;
+  return (...args: Parameters<T>) => {
+    if (timeout) clearTimeout(timeout);
+    timeout = setTimeout(() => func(...args), wait);
+  };
+};
+
 export default function InteractiveAvatar() {
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [isLoadingRepeat, setIsLoadingRepeat] = useState(false);
@@ -116,8 +128,9 @@ export default function InteractiveAvatar() {
     return `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   }, []);
 
+  // Get base API URL with fallback
   const baseApiUrl = useCallback(() => {
-    return process.env.NEXT_PUBLIC_BASE_API_URL || "";
+    return process.env.NEXT_PUBLIC_BASE_API_URL || "https://api.heygen.com";
   }, []);
 
   // Fetch access token
@@ -135,7 +148,12 @@ export default function InteractiveAvatar() {
     }
   }, []);
 
-  // Send messages to webhook with retries and sanitization
+  // Simple sanitization to avoid sanitize-html dependency
+  const sanitizeInput = (input: string): string => {
+    return input.replace(/[<>]/g, "").trim();
+  };
+
+  // Send messages to webhook with retries
   const sendToWebhook = useMemo(
     () =>
       debounce(async (message: string) => {
@@ -144,7 +162,7 @@ export default function InteractiveAvatar() {
           return;
         }
 
-        const sanitizedMessage = sanitizeHtml(message, { allowedTags: [] });
+        const sanitizedMessage = sanitizeInput(message);
         setProcessingWebhook(true);
         const maxRetries = 3;
         let attempt = 0;
@@ -168,7 +186,7 @@ export default function InteractiveAvatar() {
               throw new Error("Invalid webhook response: missing response or output field");
             }
 
-            const cleanedText = textToSpeak.replace(/<analysis>[\s\S]*?</analysis>/g, "").trim();
+            const cleanedText = textToSpeak.replace(/<analysis>[\s\S]*?<\/analysis>/g, "").trim();
             if (cleanedText && avatar.current) {
               if (isRecording) {
                 stopRecording();
@@ -194,7 +212,7 @@ export default function InteractiveAvatar() {
           }
         }
       }, 500),
-    []
+    [isRecording, stopRecording]
   );
 
   // Initialize speech recognition
@@ -588,6 +606,7 @@ export default function InteractiveAvatar() {
                   placeholder="Enter a custom avatar ID"
                   value={avatarId}
                   onChange={(e) => setAvatarId(e.target.value)}
+ KeyboardEventHandler<HTMLInputElement>>()}
                 />
                 <Select
                   aria-label="Select example avatar"
@@ -608,7 +627,7 @@ export default function InteractiveAvatar() {
                   label="Select language"
                   aria-label="Select language"
                   placeholder="Select language"
-                  className="max-w-xs"
+                  className="max-w-xs" 
                   selectedKeys={[language]}
                   onChange={(e) => setLanguage(e.target.value)}
                 >
