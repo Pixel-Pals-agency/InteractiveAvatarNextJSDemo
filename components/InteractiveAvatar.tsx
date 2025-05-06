@@ -153,6 +153,20 @@ export default function InteractiveAvatar() {
     return input.replace(/[<>]/g, "").trim();
   };
 
+  // Stop recording
+  const stopRecording: () => void = useCallback(() => {
+    try {
+      if (recognitionRef.current && isRecording) {
+        recognitionRef.current.stop();
+        setIsRecording(false);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setDebug(`Error stopping speech recognition: ${errorMessage}`);
+      setIsRecording(false);
+    }
+  }, [isRecording]);
+
   // Send messages to webhook with retries
   const sendToWebhook = useMemo(
     () =>
@@ -215,8 +229,8 @@ export default function InteractiveAvatar() {
     [isRecording, stopRecording]
   );
 
-  // Initialize speech recognition
-  const initializeSpeechRecognition = useCallback(() => {
+  // Initialize speech recognition with explicit type
+  const initializeSpeechRecognition: () => void = useCallback(() => {
     if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
       setDebug("Speech recognition is not supported in this browser");
       setChatMode("text_mode");
@@ -288,10 +302,10 @@ export default function InteractiveAvatar() {
     };
 
     recognitionRef.current = recognition;
-  }, [language, chatMode, isAvatarTalking, sendToWebhook, startRecording]);
+  }, [language, chatMode, isAvatarTalking, sendToWebhook]);
 
-  // Start recording
-  const startRecording = useCallback(() => {
+  // Start recording with explicit type
+  const startRecording: () => void = useCallback(() => {
     if (isAvatarTalking) {
       setDebug("Cannot start recording while avatar is talking");
       return;
@@ -310,20 +324,6 @@ export default function InteractiveAvatar() {
       setDebug(`Error starting speech recognition: ${errorMessage}`);
     }
   }, [isAvatarTalking, isRecording, initializeSpeechRecognition]);
-
-  // Stop recording
-  const stopRecording = useCallback(() => {
-    try {
-      if (recognitionRef.current && isRecording) {
-        recognitionRef.current.stop();
-        setIsRecording(false);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setDebug(`Error stopping speech recognition: ${errorMessage}`);
-      setIsRecording(false);
-    }
-  }, [isRecording]);
 
   // Start avatar session
   const startSession = useCallback(async () => {
