@@ -14,8 +14,6 @@ import {
   CardFooter,
   Divider,
   Input,
-  Select,
-  SelectItem,
   Spinner,
   Chip,
   Tabs,
@@ -26,9 +24,9 @@ import { useMemoizedFn, usePrevious } from "ahooks";
 
 import InteractiveAvatarTextInput from "./InteractiveAvatarTextInput";
 
-import { AVATARS, STT_LANGUAGE_LIST } from "@/app/lib/constants";
-
 const WEBHOOK_URL = "https://n8n.fastynet.click/webhook/b68e20df-39d6-4baa-a862-5b5f6b9bbcc6/chat";
+const DEFAULT_AVATAR_ID = "Katya_Chair_Sitting_public";
+const DEFAULT_LANGUAGE = "en";
 
 // Add TypeScript interfaces for Web Speech API
 interface SpeechRecognitionEvent extends Event {
@@ -82,9 +80,6 @@ export default function InteractiveAvatar() {
   const [isLoadingRepeat, setIsLoadingRepeat] = useState(false);
   const [stream, setStream] = useState<MediaStream>();
   const [debug, setDebug] = useState<string>();
-  const [knowledgeId, setKnowledgeId] = useState<string>("");
-  const [avatarId, setAvatarId] = useState<string>("");
-  const [language, setLanguage] = useState<string>("en");
   const [sessionId, setSessionId] = useState<string>("");
   // Add a ref to store the session ID that can be accessed synchronously
   const sessionIdRef = useRef<string>("");
@@ -269,7 +264,7 @@ export default function InteractiveAvatar() {
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-    recognition.lang = language;
+    recognition.lang = DEFAULT_LANGUAGE;
     
     // Add logging for configuration
     console.log("Speech recognition configured:", {
@@ -476,13 +471,13 @@ export default function InteractiveAvatar() {
     try {
       const res = await avatar.current.createStartAvatar({
         quality: AvatarQuality.Low,
-        avatarName: avatarId,
+        avatarName: DEFAULT_AVATAR_ID,
         knowledgeId: "", // Set to empty string to bypass HeyGen's internal knowledge processing
         voice: {
           rate: 1.5,
           emotion: VoiceEmotion.EXCITED,
         },
-        language: language,
+        language: DEFAULT_LANGUAGE,
         disableIdleTimeout: true,
       });
 
@@ -743,53 +738,6 @@ export default function InteractiveAvatar() {
             </div>
           ) : !isLoadingSession ? (
             <div className="h-full justify-center items-center flex flex-col gap-8 w-[500px] self-center">
-              <div className="flex flex-col gap-2 w-full">
-                <p className="text-sm font-medium leading-none">
-                  Custom Knowledge ID (optional)
-                </p>
-                <Input
-                  placeholder="Enter a custom knowledge ID"
-                  value={knowledgeId}
-                  onChange={(e) => setKnowledgeId(e.target.value)}
-                />
-                <p className="text-sm font-medium leading-none">
-                  Custom Avatar ID (optional)
-                </p>
-                <Input
-                  placeholder="Enter a custom avatar ID"
-                  value={avatarId}
-                  onChange={(e) => setAvatarId(e.target.value)}
-                />
-                <Select
-                  placeholder="Or select one from these example avatars"
-                  size="md"
-                  onChange={(e) => {
-                    setAvatarId(e.target.value);
-                  }}
-                >
-                  {AVATARS.map((avatar) => (
-                    <SelectItem
-                      key={avatar.avatar_id}
-                      textValue={avatar.avatar_id}
-                    >
-                      {avatar.name}
-                    </SelectItem>
-                  ))}
-                </Select>
-                <Select
-                  label="Select language"
-                  placeholder="Select language"
-                  className="max-w-xs"
-                  selectedKeys={[language]}
-                  onChange={(e) => {
-                    setLanguage(e.target.value);
-                  }}
-                >
-                  {STT_LANGUAGE_LIST.map((lang) => (
-                    <SelectItem key={lang.key}>{lang.label}</SelectItem>
-                  ))}
-                </Select>
-              </div>
               <Button
                 className="bg-gradient-to-tr from-indigo-500 to-indigo-300 w-full text-white"
                 size="md"
